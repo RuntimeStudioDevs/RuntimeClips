@@ -1,0 +1,88 @@
+<!doctype html>
+<!--
+  Subtítulos karaoke de alto contraste: un grupo corto por vez, texto blanco con
+  contorno negro grueso y la palabra que se está diciendo resaltada en el color
+  de acento, con un pequeño salto.
+  captions.mjs rellena los tokens desde el transcript; no se edita a mano.
+  Tokens: {{GROUPS_HTML}}, {{DATA}}, {{HEIGHT}}, {{PAD_LEFT}}, {{PAD_RIGHT}}.
+-->
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template id="captions-template">
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+        }
+        .cap-group {
+          position: absolute;
+          left: {{PAD_LEFT}}px;
+          right: {{PAD_RIGHT}}px;
+          top: 0;
+          bottom: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          opacity: 0;
+        }
+        .cap-line {
+          display: flex;
+          flex-wrap: nowrap;
+          gap: 0.38em;
+          white-space: nowrap;
+          font-family: var(--font);
+          font-weight: 900;
+          line-height: 1.1;
+          letter-spacing: -0.005em;
+          text-transform: uppercase;
+          color: var(--ink);
+          -webkit-text-stroke: 14px var(--stroke);
+          paint-order: stroke fill;
+          text-shadow: 0 6px 0 rgba(0, 0, 0, 0.9), 0 0 26px rgba(0, 0, 0, 0.8);
+        }
+        .cap-line span {
+          display: inline-block;
+          transform-origin: center 60%;
+        }
+      </style>
+      <div id="root" data-composition-id="captions" data-width="1080" data-height="{{HEIGHT}}">
+{{GROUPS_HTML}}
+      </div>
+      <script>
+        (function () {
+          const tl = gsap.timeline({ paused: true });
+          const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#ffe600";
+          const ink = "#ffffff";
+          // [inicio, fin, [[on, off], ...]] por grupo, en segundos del clip.
+          const groups = {{DATA}};
+          groups.forEach(function (g, gi) {
+            const group = document.getElementById("captions-g" + gi);
+            tl.set(group, { opacity: 1 }, g[0]);
+            tl.fromTo(
+              group.firstElementChild,
+              { scale: 0.9 },
+              { scale: 1, duration: 0.12, ease: "back.out(2)", immediateRender: false },
+              g[0],
+            );
+            tl.set(group, { opacity: 0 }, g[1]);
+            g[2].forEach(function (w, wi) {
+              const word = document.getElementById("captions-g" + gi + "-w" + wi);
+              tl.set(word, { color: accent }, w[0]);
+              tl.fromTo(
+                word,
+                { scale: 1 },
+                { scale: 1.06, duration: 0.07, yoyo: true, repeat: 1, ease: "power1.out", immediateRender: false },
+                w[0],
+              );
+              tl.set(word, { color: ink }, w[1]);
+            });
+          });
+          window.__timelines["captions"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

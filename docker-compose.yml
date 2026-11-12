@@ -1,0 +1,14 @@
+services:
+  runtime-clips:
+    build: .
+    container_name: runtime-clips
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./renders:/app/renders
+      - ./projects:/app/projects
+      - ./models:/app/models
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0

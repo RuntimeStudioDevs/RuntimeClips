@@ -1,0 +1,50 @@
+<!doctype html>
+<!--
+  Barra de progreso del clip: una línea fina en el borde superior que se llena
+  de izquierda a derecha. Es decorativa, por eso puede vivir fuera de la zona
+  segura. Tokens: {{ID}}, {{DURATION}}.
+-->
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template id="{{ID}}-template">
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+        }
+        #{{ID}}-track {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 1080px;
+          height: 12px;
+          background: rgba(255, 255, 255, 0.22);
+        }
+        #{{ID}}-fill {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 1080px;
+          height: 12px;
+          background: var(--accent);
+          transform-origin: left center;
+        }
+      </style>
+      <div id="root" data-composition-id="{{ID}}" data-width="1080" data-height="1920">
+        <div id="{{ID}}-track"></div>
+        <div id="{{ID}}-fill"></div>
+      </div>
+      <script>
+        (function () {
+          const tl = gsap.timeline({ paused: true });
+          tl.fromTo("#{{ID}}-fill", { scaleX: 0 }, { scaleX: 1, duration: {{DURATION}}, ease: "none" }, 0);
+          window.__timelines["{{ID}}"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

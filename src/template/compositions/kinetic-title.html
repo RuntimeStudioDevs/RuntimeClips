@@ -1,0 +1,99 @@
+<!doctype html>
+<!--
+  Titular cinético del gancho: las palabras entran una a una sobre una tarjeta
+  oscura, con una barra de acento que se dibuja debajo. Vive en la banda de
+  overlays (y {{BAND_TOP}}-{{BAND_BOTTOM}}), entre la cara y los subtítulos.
+  Tokens: {{ID}}, {{WORDS_HTML}}, {{WORD_COUNT}}, {{SIZE}}, {{DURATION}},
+  {{BAND_TOP}}, {{BAND_HEIGHT}}.
+-->
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template id="{{ID}}-template">
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+        }
+        #{{ID}}-wrap {
+          position: absolute;
+          left: 65px;
+          right: 65px;
+          top: {{BAND_TOP}}px;
+          height: {{BAND_HEIGHT}}px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        #{{ID}}-card {
+          position: relative;
+          max-width: 950px;
+          padding: 22px 34px 30px;
+          border-radius: 26px;
+          background: var(--card);
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: 0 0.26em;
+          font-family: var(--font);
+          font-weight: 900;
+          font-size: {{SIZE}}px;
+          line-height: 1.12;
+          letter-spacing: -0.01em;
+          text-transform: uppercase;
+          color: var(--ink);
+        }
+        .{{ID}}-word {
+          display: inline-block;
+        }
+        .{{ID}}-word.is-accent {
+          color: var(--accent);
+        }
+        #{{ID}}-bar {
+          position: absolute;
+          left: 34px;
+          right: 34px;
+          bottom: 14px;
+          height: 8px;
+          border-radius: 4px;
+          background: var(--accent);
+          transform-origin: left center;
+        }
+      </style>
+      <div id="root" data-composition-id="{{ID}}" data-width="1080" data-height="1920">
+        <div id="{{ID}}-wrap">
+          <div id="{{ID}}-card">
+            {{WORDS_HTML}}
+            <div id="{{ID}}-bar"></div>
+          </div>
+        </div>
+      </div>
+      <script>
+        (function () {
+          const tl = gsap.timeline({ paused: true });
+          const out = {{DURATION}} - 0.35;
+          tl.fromTo(
+            "#{{ID}}-card",
+            { opacity: 0, scale: 0.86, y: 30 },
+            { opacity: 1, scale: 1, y: 0, duration: 0.35, ease: "back.out(1.6)" },
+            0,
+          );
+          for (let i = 0; i < {{WORD_COUNT}}; i++) {
+            tl.fromTo(
+              "#{{ID}}-w" + i,
+              { opacity: 0, y: 26, rotation: -4 },
+              { opacity: 1, y: 0, rotation: 0, duration: 0.28, ease: "power3.out" },
+              0.12 + i * 0.07,
+            );
+          }
+          tl.fromTo("#{{ID}}-bar", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power2.inOut" }, 0.45);
+          tl.to("#{{ID}}-card", { opacity: 0, y: -24, scale: 0.96, duration: 0.3, ease: "power2.in" }, out);
+          window.__timelines["{{ID}}"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

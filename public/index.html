@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RuntimeClips — Pipeline</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">Runtime<b>Clips</b></span>
+    </div>
+
+    <form id="start-form" class="start-form" autocomplete="off">
+      <input id="url-input" type="text" placeholder="URL de YouTube o ruta local del video…" spellcheck="false" required>
+      <button id="start-btn" type="submit">▶ Generar clip</button>
+    </form>
+
+    <div class="chips">
+      <span id="pipeline-chip" class="chip" data-status="idle">idle</span>
+      <span id="sse-chip" class="chip" data-conn="off" title="Conexión SSE">● SSE</span>
+    </div>
+  </header>
+
+  <div id="form-error" class="form-error" hidden></div>
+
+  <main class="workspace">
+    <section id="canvas" class="canvas">
+      <div id="world" class="world">
+        <svg id="edges" class="edges" width="1" height="1"></svg>
+      </div>
+
+      <div class="canvas-tools">
+        <button id="zoom-in" type="button" title="Acercar">+</button>
+        <button id="zoom-out" type="button" title="Alejar">−</button>
+        <button id="zoom-fit" type="button" title="Ajustar a la vista">⤢</button>
+      </div>
+    </section>
+
+    <aside id="drawer" class="drawer" aria-hidden="true">
+      <header class="drawer-head">
+        <span id="drawer-icon" class="drawer-icon"></span>
+        <div class="drawer-titles">
+          <h2 id="drawer-title"></h2>
+          <p id="drawer-sub"></p>
+        </div>
+        <span id="drawer-status" class="chip" data-status="idle"></span>
+        <button id="drawer-close" type="button" class="icon-btn" title="Cerrar (Esc)">✕</button>
+      </header>
+
+      <div class="drawer-body">
+        <section id="drawer-player" class="drawer-section" hidden>
+          <h3>Reel final</h3>
+          <div class="player">
+            <video id="player-video" controls playsinline preload="metadata" hidden></video>
+            <p id="player-empty" class="player-empty">El Reel aparecerá aquí cuando termine el render.</p>
+          </div>
+          <a id="player-download" class="download-btn" download hidden>⬇ Descargar MP4</a>
+        </section>
+
+        <section class="drawer-section">
+          <h3>Telemetría</h3>
+          <dl id="drawer-telemetry" class="telemetry"></dl>
+        </section>
+
+        <section id="drawer-error-section" class="drawer-section" hidden>
+          <h3>Error</h3>
+          <pre id="drawer-error" class="code error"></pre>
+        </section>
+
+        <section class="drawer-section">
+          <h3>Datos intermedios</h3>
+          <pre id="drawer-data" class="code"></pre>
+        </section>
+
+        <section class="drawer-section">
+          <h3>Logs del nodo</h3>
+          <div id="drawer-logs" class="log-list compact"></div>
+        </section>
+      </div>
+    </aside>
+  </main>
+
+  <section class="logs">
+    <header class="logs-head">
+      <h2>Logs en vivo</h2>
+      <span id="log-count" class="muted">0</span>
+      <label class="muted autoscroll"><input id="log-autoscroll" type="checkbox" checked> auto-scroll</label>
+      <button id="log-clear" type="button" class="text-btn">Limpiar</button>
+    </header>
+    <div id="log-list" class="log-list"></div>
+  </section>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

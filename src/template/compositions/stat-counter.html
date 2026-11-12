@@ -1,0 +1,103 @@
+<!doctype html>
+<!--
+  Cifra animada: tarjeta flotante con un número que cuenta desde 0 hasta el
+  valor que se acaba de decir, y su etiqueta al lado.
+  Tokens: {{ID}}, {{VALUE}}, {{DECIMALS}}, {{PREFIX}}, {{SUFFIX}}, {{LABEL}},
+  {{DURATION}}, {{BAND_TOP}}, {{BAND_HEIGHT}}.
+-->
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template id="{{ID}}-template">
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+        }
+        #{{ID}}-wrap {
+          position: absolute;
+          left: 65px;
+          right: 65px;
+          top: {{BAND_TOP}}px;
+          height: {{BAND_HEIGHT}}px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        #{{ID}}-card {
+          display: flex;
+          align-items: center;
+          gap: 26px;
+          max-width: 950px;
+          padding: 18px 40px 18px 34px;
+          border-radius: 30px;
+          border-left: 14px solid var(--accent);
+          background: var(--card);
+          font-family: var(--font);
+        }
+        #{{ID}}-number {
+          font-weight: 900;
+          font-size: 124px;
+          line-height: 1;
+          letter-spacing: -0.03em;
+          color: var(--accent);
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
+        #{{ID}}-label {
+          max-width: 480px;
+          font-weight: 800;
+          font-size: 48px;
+          line-height: 1.08;
+          text-transform: uppercase;
+          color: var(--ink);
+        }
+      </style>
+      <div id="root" data-composition-id="{{ID}}" data-width="1080" data-height="1920">
+        <div id="{{ID}}-wrap">
+          <div id="{{ID}}-card">
+            <div id="{{ID}}-number">{{PREFIX}}{{VALUE_TEXT}}{{SUFFIX}}</div>
+            <div id="{{ID}}-label">{{LABEL}}</div>
+          </div>
+        </div>
+      </div>
+      <script>
+        (function () {
+          const tl = gsap.timeline({ paused: true });
+          const number = document.getElementById("{{ID}}-number");
+          const counter = { value: 0 };
+          const format = function (value) {
+            return "{{PREFIX}}" + value.toLocaleString("es", { minimumFractionDigits: {{DECIMALS}}, maximumFractionDigits: {{DECIMALS}} }) + "{{SUFFIX}}";
+          };
+          const out = {{DURATION}} - 0.3;
+          tl.fromTo(
+            "#{{ID}}-card",
+            { opacity: 0, x: -120, scale: 0.9 },
+            { opacity: 1, x: 0, scale: 1, duration: 0.4, ease: "back.out(1.4)" },
+            0,
+          );
+          tl.fromTo(
+            counter,
+            { value: 0 },
+            {
+              value: {{VALUE}},
+              duration: 0.9,
+              ease: "power2.out",
+              onUpdate: function () {
+                number.textContent = format(counter.value);
+              },
+            },
+            0.1,
+          );
+          tl.fromTo("#{{ID}}-number", { scale: 1 }, { scale: 1.12, duration: 0.14, yoyo: true, repeat: 1, ease: "power1.inOut" }, 1.0);
+          tl.fromTo("#{{ID}}-label", { opacity: 0, x: 24 }, { opacity: 1, x: 0, duration: 0.3, ease: "power2.out" }, 0.3);
+          tl.to("#{{ID}}-card", { opacity: 0, x: 120, duration: 0.3, ease: "power2.in" }, out);
+          window.__timelines["{{ID}}"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>
