@@ -204,6 +204,12 @@ function renderOverlay(overlay) {
       });
     case 'keyword-badge':
       return fill(template, { ...common, TEXT: escapeHtml(overlay.text), SIZE: overlay.size });
+    case 'comparison':
+      return fill(template, { ...common, ITEM_A: escapeHtml(overlay.itemA || 'A'), ITEM_B: escapeHtml(overlay.itemB || 'B') });
+    case 'quote-card':
+      return fill(template, { ...common, QUOTE: escapeHtml(overlay.quote || '') });
+    case 'step-list':
+      return fill(template, { ...common, STEP_NUM: overlay.stepNum || '1', STEP_TEXT: escapeHtml(overlay.stepText || '') });
     default:
       return fill(template, common);
   }

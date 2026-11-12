@@ -9,10 +9,12 @@
 
 * 🔒 **100% Local y Privado:** Tus videos, transcripciones y audios nunca se envían a APIs en la nube. Todo el procesamiento corre en tu hardware local.
 * 🤖 **100% Autónomo:** Pega una URL de YouTube (o pasa un archivo local) y el sistema se encarga de todo: descarga, transcripción, detección de ganchos virales (30–60 s), reencuadre facial, composición y render.
+* 🎙️ **Motor Multi-Clip para Podcasts y Videos Largos (1h+):** Analiza horas completas de video y extrae automáticamente el **máximo número de clips virales no solapados** (entre 5 y 25 clips de alto impacto ordenados por puntuación de virabilidad).
+* 🎨 **Brand Kits Corporativos (`brands/*.json`):** Personalización completa de marca con colores corporativos, tipografía y cálculo de contraste WCAG $\ge$ 4.5:1.
 * 📱 **Pantalla Completa Real (9:16 - 1080×1920):** **Sin pantalla dividida**. El video del orador llena todo el fondo con seguimiento facial inteligente (UltraFace ONNX) y cortes multicámara automáticos.
-* ✨ **Motion Graphics Transparentes (GSAP):** Titulares cinéticos, barras de progreso, cifras con conteo animado y badges de palabras clave superpuestos dinámicamente según el guion.
+* ✨ **Motion Graphics Transparentes (GSAP):** Titulares cinéticos, barras de progreso, cifras con conteo animado, badges, tarjetas de comparación A/B, listas de pasos y citas destacadas superpuestas dinámicamente según el guion.
 * 💬 **Subtítulos Dinámicos Karaoke:** Agrupamiento de 2–4 palabras con resaltado temporal sincronizado palabra por palabra y contraste optimizado para celulares.
-* 📊 **Dashboard Visual Observable (Estilo n8n):** Interfaz web moderna (`http://localhost:3000`) con un grafo interactivo de **9 nodos conectados por cables curvos SVG**, pulsos luminosos de flujo de datos, streaming de logs por Server-Sent Events (SSE), drawer de inspección de telemetría y reproductor de video final integrado.
+* 📊 **Dashboard Visual Observable (Estilo n8n):** Interfaz web moderna (`http://localhost:3000`) con un grafo interactivo de **9 nodos conectados por cables curvos SVG**, galería de clips descubiertos con puntuación individual, pulsos luminosos de flujo de datos, streaming de logs por Server-Sent Events (SSE), drawer de inspección de telemetría y reproductor de video final integrado.
 * 🔊 **Masterización de Audio Profesional:** Normalización EBU R128 a **-14 LUFS** (±1 LUFS) con True Peak **$\le$ -1 dBTP** (especificación estricta de Instagram Reels, TikTok y YouTube Shorts).
 
 ---

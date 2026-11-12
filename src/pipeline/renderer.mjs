@@ -12,6 +12,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeF
 import path from 'node:path';
 import { CANVAS, FPS, ROOT, exec, ffmpeg, hf, probeMedia, requireTool } from './tools.mjs';
 import { CAPTIONS_ZONE } from './captions.mjs';
+import { loadBrand, brandCss } from './brand.mjs';
 
 const TEMPLATE_DIR = path.join(ROOT, 'src', 'template');
 const TARGET_LUFS = -14;
@@ -44,7 +45,9 @@ const overlaySlot = (o) => `
       ></div>`;
 
 /** Escribe index.html: video al 100 % del lienzo + slots de overlays + subtítulos. */
-export function compileComposition({ projectDir, durationSec, accent = '#ffe600' }) {
+export function compileComposition({ projectDir, durationSec, accent = '#ffe600', brand: brandName = 'default' }) {
+  const brand = loadBrand(brandName);
+  const activeAccent = accent !== '#ffe600' ? accent : (brand.palette?.accent || '#ffe600');
   const overlays = JSON.parse(readFileSync(path.join(projectDir, 'overlays.json'), 'utf8'));
   // Solo fotogramas completos: una duración que pase del último deja una cola negra.
   const duration = Number((Math.floor(durationSec * FPS) / FPS).toFixed(4));
@@ -55,7 +58,8 @@ export function compileComposition({ projectDir, durationSec, accent = '#ffe600'
   html = html.slice(0, html.indexOf(start) + start.length) + overlays.map((o) => overlaySlot(fit(o))).join('') + '\n      ' + html.slice(html.indexOf(end));
   html = html
     .replaceAll('{{DURATION}}', String(duration))
-    .replaceAll('{{ACCENT}}', /^#[0-9a-f]{3,8}$/i.test(accent) ? accent : '#ffe600')
+    .replaceAll('{{ACCENT}}', /^#[0-9a-f]{3,8}$/i.test(activeAccent) ? activeAccent : '#ffe600')
+    .replaceAll('{{BRAND_CSS}}', brandCss(brand))
     .replaceAll('{{CAPTIONS_TOP}}', String(CAPTIONS_ZONE.top))
     .replaceAll('{{CAPTIONS_HEIGHT}}', String(CAPTIONS_ZONE.height))
     .replaceAll('{{CAPTIONS_TRACK}}', '4');
@@ -75,7 +79,7 @@ async function measureLoudness(file) {
  * @returns datos técnicos del MP4 final y el resultado del QA
  */
 export async function renderClip({ projectDir, outFile, durationSec, options = {} }, { log, onProgress }) {
-  const composition = compileComposition({ projectDir, durationSec, accent: options.accent });
+  const composition = compileComposition({ projectDir, durationSec, accent: options.accent, brand: options.brand });
   log('info', `Composición: ${composition.frames} fotogramas (${composition.duration} s) · ${composition.overlays} overlays + subtítulos`);
 
   // 1. Render de la composición (0 → 85 % de la barra).

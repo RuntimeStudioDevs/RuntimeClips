@@ -293,6 +293,43 @@ function renderDrawer() {
   $('#drawer-error').textContent = node.error ?? '';
   $('#drawer-data').textContent = node.data ? JSON.stringify(node.data, null, 2) : 'Sin datos todavía.';
 
+  // Galería de clips virales si el nodo tiene clips descubiertos
+  const clips = node.data?.clips || (node.key === 'player' ? node.data?.clips : null);
+  const clipsSection = $('#drawer-clips-section');
+  if (clipsSection) {
+    if (clips && clips.length) {
+      clipsSection.hidden = false;
+      $('#clips-count-badge').textContent = `${clips.length} clips`;
+      const list = $('#drawer-clips-list');
+      list.replaceChildren(
+        ...clips.map((clip, idx) => {
+          const card = h('div', { class: 'clip-card' });
+          const head = h('div', { class: 'clip-card-head' },
+            h('span', { text: `Clip #${idx + 1}` }),
+            h('span', { class: 'clip-score', text: `${clip.scorePercent || Math.round((clip.score || 0) * 100)}% viral` }),
+          );
+          const title = h('div', { class: 'clip-title', text: clip.title || clip.hook });
+          const time = h('div', { class: 'clip-time', text: `⏱ ${clip.startSec.toFixed(1)}s → ${clip.endSec.toFixed(1)}s (${clip.durationSec.toFixed(1)}s)` });
+          const btn = h('button', { class: 'clip-btn', type: 'button', text: '▶ Renderizar este clip' });
+          btn.addEventListener('click', () => {
+            fetch('/api/pipeline/start', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                url: state.pipeline.url,
+                options: { start: clip.startSec, end: clip.endSec },
+              }),
+            }).catch((err) => alert(err.message));
+          });
+          card.append(head, title, time, btn);
+          return card;
+        }),
+      );
+    } else {
+      clipsSection.hidden = true;
+    }
+  }
+
   const nodeLogs = state.logs.filter((entry) => entry.node === node.key).slice(-60);
   $('#drawer-logs').replaceChildren(...nodeLogs.map((entry) => logLine(entry, false)));
 

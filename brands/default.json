@@ -1,0 +1,21 @@
+{
+  "name": "default",
+  "handle": "@runtimeclips",
+  "palette": {
+    "bg": "#0d0e12",
+    "ink": "#ffffff",
+    "accent": "#ff6d5a",
+    "accent2": "#ffe600",
+    "card": "rgba(21, 23, 29, 0.85)"
+  },
+  "fonts": {
+    "display": "Inter",
+    "body": "Inter"
+  },
+  "captions": {
+    "size": 72,
+    "case": "upper",
+    "highlight": "accent2",
+    "box": "rgba(0, 0, 0, 0.75)"
+  }
+}

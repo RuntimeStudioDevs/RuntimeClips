@@ -1,0 +1,81 @@
+<!doctype html>
+<!--
+  Tarjeta de Cita Destacada: resalta una frase estelar o revelación con comillas gigantes animadas.
+  Tokens: {{ID}}, {{QUOTE}}, {{DURATION}}, {{BAND_TOP}}, {{BAND_HEIGHT}}.
+-->
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template id="{{ID}}-template">
+      <style>
+        #root {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+        }
+        #{{ID}}-wrap {
+          position: absolute;
+          left: 65px;
+          right: 65px;
+          top: {{BAND_TOP}}px;
+          height: {{BAND_HEIGHT}}px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        #{{ID}}-box {
+          position: relative;
+          width: 100%;
+          padding: 24px 36px 28px 46px;
+          border-radius: 20px;
+          background: rgba(18, 20, 28, 0.94);
+          border-left: 6px solid var(--accent);
+          box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65);
+          font-family: var(--font);
+        }
+        .quote-mark {
+          position: absolute;
+          left: 12px;
+          top: -10px;
+          font-size: 72px;
+          line-height: 1;
+          color: var(--accent);
+          opacity: 0.8;
+          font-serif: Georgia, serif;
+        }
+        .quote-text {
+          font-size: 34px;
+          font-weight: 800;
+          line-height: 1.25;
+          color: #ffffff;
+          font-style: italic;
+        }
+      </style>
+      <div id="root" data-composition-id="{{ID}}" data-width="1080" data-height="1920">
+        <div id="{{ID}}-wrap">
+          <div id="{{ID}}-box">
+            <span class="quote-mark">“</span>
+            <div class="quote-text">{{QUOTE}}</div>
+          </div>
+        </div>
+      </div>
+      <script>
+        (function () {
+          const tl = gsap.timeline({ paused: true });
+          const out = {{DURATION}} - 0.25;
+          tl.fromTo(
+            "#{{ID}}-box",
+            { opacity: 0, x: -40 },
+            { opacity: 1, x: 0, duration: 0.45, ease: "power3.out" },
+            0,
+          );
+          tl.fromTo(".quote-mark", { scale: 0 }, { scale: 1, duration: 0.3, ease: "back.out(2)" }, 0.1);
+          tl.to("#{{ID}}-box", { opacity: 0, scale: 0.9, duration: 0.25, ease: "power2.in" }, out);
+          window.__timelines["{{ID}}"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

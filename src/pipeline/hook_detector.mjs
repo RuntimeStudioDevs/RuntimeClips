@@ -257,30 +257,64 @@ export function detectHook({ words, sentences, durationSec: totalSec, options = 
   }
 
   candidates.sort((a, b) => b.score - a.score || a.startSec - b.startSec);
-  const top = [];
+
+  // Parámetros de extracción multi-clip (para podcasts y videos largos)
+  const maxClips = Math.max(1, Number(options.maxClips) || (options.multi ? 25 : 5));
+  const minScore = Number.isFinite(Number(options.minScore)) ? Number(options.minScore) : 0.50;
+  const overlapMax = Number.isFinite(Number(options.overlapThreshold)) ? Number(options.overlapThreshold) : 0.05;
+
+  const selectedCandidates = [];
   for (const candidate of candidates) {
-    if (top.every((kept) => overlap(kept, candidate) < 0.5)) top.push(candidate);
-    if (top.length === 5) break;
+    if (candidate.score < minScore && selectedCandidates.length >= 1) continue;
+    const hasOverlap = selectedCandidates.some((kept) => overlap(kept, candidate) > overlapMax);
+    if (!hasOverlap) {
+      selectedCandidates.push(candidate);
+      if (selectedCandidates.length >= maxClips) break;
+    }
   }
 
-  const describe = (c) => {
+  // Si por el umbral de score no se seleccionó ninguno, tomar al menos el mejor
+  if (!selectedCandidates.length && candidates.length) {
+    selectedCandidates.push(candidates[0]);
+  }
+
+  const describe = (c, idx = 0) => {
     const breakdown = Object.fromEntries(Object.keys(WEIGHTS).map((key) => [key, Number(c.parts[key].score.toFixed(3))]));
+    const hookText = sentences[c.firstSentence]?.text || words.slice(c.firstWord, c.firstWord + 10).map((w) => w.text).join(' ');
+    // Generar un título conciso a partir del gancho
+    const title = hookText.replace(/[.!?…]+$/, '').slice(0, 55).trim();
     return {
+      clipId: `clip-${String(idx + 1).padStart(2, '0')}`,
+      title,
       startSec: c.startSec,
       endSec: c.endSec,
       durationSec: c.durationSec,
       firstWord: c.firstWord,
       lastWord: c.lastWord,
       score: Number(c.score.toFixed(3)),
-      hook: sentences[c.firstSentence].text,
+      scorePercent: Math.round(c.score * 100),
+      hook: hookText,
       reasons: Object.keys(WEIGHTS).flatMap((key) => c.parts[key].reasons),
       breakdown,
       wordsPerSec: c.parts.rhythm.wps,
     };
   };
 
-  const [best, ...alternatives] = top.map(describe);
-  log('info', `${candidates.length} ventanas evaluadas en ${sentences.length} frases`);
-  top.forEach((c, i) => log('info', `#${i + 1} ${c.startSec.toFixed(1)}–${c.endSec.toFixed(1)} s · score ${c.score.toFixed(2)} · "${sentences[c.firstSentence].text.slice(0, 70)}"`));
-  return { ...best, candidates: alternatives, evaluated: candidates.length };
+  const allClips = selectedCandidates.map((c, i) => describe(c, i));
+  const [best, ...alternatives] = allClips;
+
+  log('info', `${candidates.length} ventanas evaluadas en ${sentences.length} frases (${totalSec.toFixed(1)} s total)`);
+  log('info', `🔥 ${allClips.length} clips virales detectados sin solapamiento (umbral score ≥ ${minScore}):`);
+  allClips.forEach((c, i) => {
+    log('info', `  [Clip ${i + 1}] ${c.startSec.toFixed(1)}–${c.endSec.toFixed(1)} s (${c.durationSec}s) · Score ${c.scorePercent}% · "${c.title}"`);
+  });
+
+  return { ...best, clips: allClips, candidates: alternatives, evaluated: candidates.length };
+}
+
+/**
+ * Función pública para extraer todos los clips enganchadores de un video largo.
+ */
+export function detectAllHooks(input, context) {
+  return detectHook({ ...input, options: { ...(input.options || {}), multi: true } }, context);
 }

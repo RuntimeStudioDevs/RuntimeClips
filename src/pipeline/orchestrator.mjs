@@ -124,7 +124,7 @@ const STAGES = {
     const { words, sentences } = ctx.transcript;
     onProgress(0.2);
     ctx.hook = detectHook(
-      { words, sentences, durationSec: ctx.media.durationSec, options: ctx.job.options },
+      { words, sentences, durationSec: ctx.media.durationSec, options: { multi: true, ...(ctx.job.options || {}) } },
       { log: ctx.log },
     );
     const { hook } = ctx;
@@ -137,13 +137,15 @@ const STAGES = {
         end: Number(Math.min(hook.durationSec, w.end - hook.startSec).toFixed(3)),
       }));
     if (!ctx.clipWords.length) ctx.log('warn', 'La ventana elegida no contiene palabras: el clip saldrá sin subtítulos');
-    ctx.log('info', `Ventana elegida: ${fmtClock(hook.startSec)} → ${fmtClock(hook.endSec)} (${hook.durationSec.toFixed(1)} s)${hook.score === null ? '' : ` · score ${hook.score}`}`);
+    ctx.log('info', `Clip principal: ${fmtClock(hook.startSec)} → ${fmtClock(hook.endSec)} (${hook.durationSec.toFixed(1)} s)${hook.score === null ? '' : ` · Score ${Math.round((hook.score || 0) * 100)}%`}`);
     for (const reason of hook.reasons) ctx.log('info', `· ${reason}`);
     writeFileSync(path.join(ctx.projectDir, 'hook.json'), `${JSON.stringify(hook, null, 2)}\n`);
-    const { firstWord, lastWord, candidates, ...selected } = hook;
+    const { firstWord, lastWord, candidates, clips, ...selected } = hook;
     return {
       window: [hook.startSec, hook.endSec],
       selected,
+      clips: clips || [selected],
+      totalClips: (clips || [selected]).length,
       text: ctx.clipWords.map((w) => w.text).join(' '),
       evaluated: hook.evaluated,
       alternatives: candidates.map(({ startSec, endSec, score, hook: opening, reasons }) => ({ startSec, endSec, score, hook: opening, reasons })),
@@ -198,6 +200,8 @@ const STAGES = {
       durationSec: ctx.render.durationSec,
       sizeMb: ctx.render.sizeMb,
       qa: ctx.render.qa.pass ? 'LISTO' : 'REVISAR',
+      clips: ctx.hook.clips || [],
+      totalClipsDiscovered: ctx.hook.clips ? ctx.hook.clips.length : 1,
     };
   },
 };

@@ -9,6 +9,7 @@ import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PIPELINE_NODES, runPipeline } from './src/pipeline/orchestrator.mjs';
+import { listBrands } from './src/pipeline/brand.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -171,6 +172,10 @@ app.post('/api/pipeline/start', (req, res) => {
 
 app.get('/api/pipeline/status', (_req, res) => {
   res.json({ ...snapshot(), clients: clients.size });
+});
+
+app.get('/api/brands', (_req, res) => {
+  res.json({ brands: listBrands() });
 });
 
 app.use('/renders', express.static(RENDERS_DIR));
