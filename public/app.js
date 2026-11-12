@@ -309,7 +309,10 @@ function renderDrawer() {
             h('span', { class: 'clip-score', text: `${clip.scorePercent || Math.round((clip.score || 0) * 100)}% viral` }),
           );
           const title = h('div', { class: 'clip-title', text: clip.title || clip.hook });
-          const time = h('div', { class: 'clip-time', text: `⏱ ${clip.startSec.toFixed(1)}s → ${clip.endSec.toFixed(1)}s (${clip.durationSec.toFixed(1)}s)` });
+          const timeText = clip.startClock
+            ? `⏱ ${clip.startClock} → ${clip.endClock} (${clip.durationSec.toFixed(1)}s)`
+            : `⏱ ${clip.startSec.toFixed(1)}s → ${clip.endSec.toFixed(1)}s (${clip.durationSec.toFixed(1)}s)`;
+          const time = h('div', { class: 'clip-time', text: timeText });
           const btn = h('button', { class: 'clip-btn', type: 'button', text: '▶ Renderizar este clip' });
           btn.addEventListener('click', () => {
             fetch('/api/pipeline/start', {

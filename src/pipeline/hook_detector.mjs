@@ -10,7 +10,7 @@
 //
 // Es determinista: el mismo transcript siempre devuelve la misma ventana.
 
-import { clamp, snap } from './tools.mjs';
+import { clamp, snap, fmtClock } from './tools.mjs';
 
 const WEIGHTS = { opening: 0.35, keywords: 0.25, rhythm: 0.25, closure: 0.15 };
 const MIN_SEC = 30;
@@ -258,10 +258,15 @@ export function detectHook({ words, sentences, durationSec: totalSec, options = 
 
   candidates.sort((a, b) => b.score - a.score || a.startSec - b.startSec);
 
-  // Parámetros de extracción multi-clip (para podcasts y videos largos)
-  const maxClips = Math.max(1, Number(options.maxClips) || (options.multi ? 25 : 5));
-  const minScore = Number.isFinite(Number(options.minScore)) ? Number(options.minScore) : 0.50;
-  const overlapMax = Number.isFinite(Number(options.overlapThreshold)) ? Number(options.overlapThreshold) : 0.05;
+  // Parámetros de extracción multi-clip universal:
+  // Aplica a CUALQUIER duración de video (5 min, 10 min, 15 min, 20 min, 100+ min).
+  // Busca el número MÁXIMO posible de clips llamativos sin solapamiento (0% overlap).
+  // IMPORTANTE: Respeta siempre la duración natural del clip (mínimo minSec, default 30s;
+  // nunca se reduce artificialmente la duración para inflar el conteo).
+  const theoreticalMax = Math.max(1, Math.floor(speechSec / minSec));
+  const maxClips = Number(options.maxClips) > 0 ? Number(options.maxClips) : (options.single ? 1 : theoreticalMax);
+  const minScore = Number.isFinite(Number(options.minScore)) ? Number(options.minScore) : 0.40;
+  const overlapMax = Number.isFinite(Number(options.overlapThreshold)) ? Number(options.overlapThreshold) : 0.001;
 
   const selectedCandidates = [];
   for (const candidate of candidates) {
@@ -285,10 +290,13 @@ export function detectHook({ words, sentences, durationSec: totalSec, options = 
     const title = hookText.replace(/[.!?…]+$/, '').slice(0, 55).trim();
     return {
       clipId: `clip-${String(idx + 1).padStart(2, '0')}`,
+      rank: idx + 1,
       title,
       startSec: c.startSec,
       endSec: c.endSec,
       durationSec: c.durationSec,
+      startClock: fmtClock(c.startSec),
+      endClock: fmtClock(c.endSec),
       firstWord: c.firstWord,
       lastWord: c.lastWord,
       score: Number(c.score.toFixed(3)),
@@ -302,19 +310,29 @@ export function detectHook({ words, sentences, durationSec: totalSec, options = 
 
   const allClips = selectedCandidates.map((c, i) => describe(c, i));
   const [best, ...alternatives] = allClips;
+  const totalClipsSec = allClips.reduce((acc, c) => acc + c.durationSec, 0);
+  const coveragePercent = Math.min(100, Math.round((totalClipsSec / speechSec) * 100));
 
-  log('info', `${candidates.length} ventanas evaluadas en ${sentences.length} frases (${totalSec.toFixed(1)} s total)`);
-  log('info', `🔥 ${allClips.length} clips virales detectados sin solapamiento (umbral score ≥ ${minScore}):`);
-  allClips.forEach((c, i) => {
-    log('info', `  [Clip ${i + 1}] ${c.startSec.toFixed(1)}–${c.endSec.toFixed(1)} s (${c.durationSec}s) · Score ${c.scorePercent}% · "${c.title}"`);
+  log('info', `${candidates.length} ventanas de 30-60s evaluadas en ${sentences.length} frases (${totalSec.toFixed(1)} s total)`);
+  log('info', `Duración de voz: ${speechSec.toFixed(1)} s (${(speechSec / 60).toFixed(1)} min). Capacidad máxima teórica: ${theoreticalMax} clips de ${minSec}-${maxSec} s.`);
+  log('info', `🔥 ${allClips.length} clips llamativos extraídos sin solapamiento (score ≥ ${Math.round(minScore * 100)}%, cobertura ${coveragePercent}%):`);
+  allClips.forEach((c) => {
+    log('info', `  [${c.clipId}] ${c.startClock} → ${c.endClock} (${c.durationSec}s) · Score ${c.scorePercent}% · "${c.title}"`);
   });
 
-  return { ...best, clips: allClips, candidates: alternatives, evaluated: candidates.length };
+  return {
+    ...best,
+    clips: allClips,
+    candidates: alternatives,
+    evaluated: candidates.length,
+    theoreticalMax,
+    coveragePercent,
+  };
 }
 
 /**
- * Función pública para extraer todos los clips enganchadores de un video largo.
+ * Función pública para extraer el máximo número de clips enganchadores de cualquier video (5m, 10m, 15m, 20m, 100m+).
  */
 export function detectAllHooks(input, context) {
-  return detectHook({ ...input, options: { ...(input.options || {}), multi: true } }, context);
+  return detectHook(input, context);
 }
