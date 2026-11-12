@@ -8,7 +8,11 @@
     "dev": "node server.mjs",
     "start": "node server.mjs",
     "clip": "node src/pipeline/orchestrator.mjs",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.mjs",
+    "agent:analyze": "node src/cli/agent_analyze.mjs",
+    "agent:qa": "node src/cli/agent_qa.mjs",
+    "agent:snapshot": "node src/cli/agent_snapshot.mjs",
+    "agent:social": "node src/cli/agent_social.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",

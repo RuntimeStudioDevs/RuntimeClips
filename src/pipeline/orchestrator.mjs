@@ -17,6 +17,9 @@ import { buildOverlays } from './overlays.mjs';
 import { buildCaptions } from './captions.mjs';
 import { prepareProject, renderClip } from './renderer.mjs';
 import { createZipArchive } from './packager.mjs';
+import { auditClip } from './qa_auditor.mjs';
+import { generateContactSheet } from './snapshot.mjs';
+import { buildSocialPack } from './social_packager.mjs';
 
 export const TRUNK_NODES = [
   { key: 'input', label: 'Input', subtitle: 'YouTube URL / Local', icon: '🔗' },
@@ -235,6 +238,32 @@ async function runClipBranch(ctx, clip, clipIdx, emit) {
     )
   );
 
+  // 5. Auditoría técnica de QA (ffprobe + loudnorm)
+  let qaReport = renderResult.qa;
+  try {
+    qaReport = await auditClip(outFilePath, {
+      log: (lvl, msg) => emit.log(lvl, msg, `render-${cid}`),
+    });
+  } catch (qaErr) {
+    emit.log('warn', `QA auditor advertencia: ${qaErr.message}`, `render-${cid}`);
+  }
+
+  // 6. Contact Sheet & Cover para inspección multimodal
+  let snapshotResult = {};
+  try {
+    snapshotResult = await generateContactSheet(outFilePath, ctx.job.rendersDir, {
+      log: (lvl, msg) => emit.log(lvl, msg, `render-${cid}`),
+    });
+  } catch (snapErr) {
+    emit.log('warn', `Snapshot advertencia: ${snapErr.message}`, `render-${cid}`);
+  }
+
+  // 7. Generación del Paquete Social (Copy, Título, Hashtags)
+  const socialOutFile = path.join(clipDir, 'social-pack.json');
+  const socialPack = buildSocialPack(clip, clipWords, qaReport, snapshotResult, socialOutFile);
+  const socialRenderCopy = path.join(ctx.job.rendersDir, `${clipSlug}-${ctx.job.runId}-${cid}-social.json`);
+  writeFileSync(socialRenderCopy, JSON.stringify(socialPack, null, 2));
+
   return {
     clipId: cid,
     rank: k,
@@ -248,8 +277,12 @@ async function runClipBranch(ctx, clip, clipIdx, emit) {
     file: outFileName,
     filePath: outFilePath,
     videoUrl: `/renders/${encodeURIComponent(outFileName)}`,
+    contactSheet: snapshotResult.contactSheet || null,
+    cover: snapshotResult.cover || null,
+    socialPack,
+    socialFile: socialRenderCopy,
     sizeMb: renderResult.sizeMb,
-    qa: renderResult.qa,
+    qa: qaReport,
   };
 }
 
@@ -264,8 +297,17 @@ async function runCollector(ctx, renderedClips, emit) {
   const zipName = [slugify(ctx.media.meta.title) || 'runtimeclips', ctx.job.runId, 'all-clips.zip'].join('-');
   const zipPath = path.join(ctx.job.rendersDir, zipName);
 
+  // Recolectar MP4s, contact sheets, portadas y paquetes sociales
+  const filesToPackage = [];
+  for (const c of renderedClips) {
+    if (c.filePath) filesToPackage.push(c.filePath);
+    if (c.contactSheet) filesToPackage.push(c.contactSheet);
+    if (c.cover) filesToPackage.push(c.cover);
+    if (c.socialFile) filesToPackage.push(c.socialFile);
+  }
+
   const zipResult = await createZipArchive(
-    renderedClips.map((c) => c.filePath),
+    filesToPackage,
     zipPath,
     { log: (lvl, msg) => emit.log(lvl, msg, nodeKey) }
   );
