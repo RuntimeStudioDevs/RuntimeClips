@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RuntimeClips — Pipeline</title>
+  <title>RuntimeClips — Pipeline en Árbol</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,7 +15,23 @@
 
     <form id="start-form" class="start-form" autocomplete="off">
       <input id="url-input" type="text" placeholder="URL de YouTube o ruta local del video…" spellcheck="false" required>
-      <button id="start-btn" type="submit">▶ Generar clip</button>
+
+      <div class="form-options">
+        <select id="clip-limit-select" class="form-select" title="Clips a generar">
+          <option value="all" selected>Todos los clips (Auto)</option>
+          <option value="3">Top 3 clips</option>
+          <option value="5">Top 5 clips</option>
+          <option value="10">Top 10 clips</option>
+        </select>
+
+        <select id="workers-select" class="form-select" title="Concurrencia de workers">
+          <option value="2" selected>2 en paralelo</option>
+          <option value="3">3 en paralelo</option>
+          <option value="1">1 secuencial</option>
+        </select>
+      </div>
+
+      <button id="start-btn" type="submit">▶ Procesar Árbol</button>
     </form>
 
     <div class="chips">
@@ -52,12 +68,28 @@
 
       <div class="drawer-body">
         <section id="drawer-player" class="drawer-section" hidden>
-          <h3>Reel final</h3>
+          <div id="zip-package-banner" class="zip-banner" hidden>
+            <div class="zip-banner-info">
+              <span class="zip-icon">📦</span>
+              <div>
+                <h4 id="zip-banner-title">Paquete Completo de Reels</h4>
+                <p id="zip-banner-desc" class="muted">Todos los clips listos en un único archivo comprimido.</p>
+              </div>
+            </div>
+            <a id="player-zip-download" class="download-btn zip-action-btn" download>⬇ Descargar todos (.ZIP)</a>
+          </div>
+
+          <h3 id="player-section-title">Previsualización de Reels</h3>
           <div class="player">
             <video id="player-video" controls playsinline preload="metadata" hidden></video>
-            <p id="player-empty" class="player-empty">El Reel aparecerá aquí cuando termine el render.</p>
+            <p id="player-empty" class="player-empty">Los Reels aparecerán aquí cuando termine el render.</p>
           </div>
-          <a id="player-download" class="download-btn" download hidden>⬇ Descargar MP4</a>
+          <a id="player-download" class="download-btn" download hidden>⬇ Descargar Reel actual</a>
+
+          <div id="player-gallery-section" class="player-gallery" hidden>
+            <h4 style="margin: 14px 0 8px; font-size: 13px;">Galería de Reels Generados</h4>
+            <div id="player-gallery-list" class="gallery-list"></div>
+          </div>
         </section>
 
         <section class="drawer-section">
@@ -67,10 +99,10 @@
 
         <section id="drawer-clips-section" class="drawer-section" hidden>
           <div class="clips-header">
-            <h3>🔥 Clips Virales Encontrados</h3>
+            <h3>🔥 Clips Detectados para Ramas</h3>
             <span id="clips-count-badge" class="chip">0 clips</span>
           </div>
-          <p class="muted" style="font-size:12px; margin: 6px 0 12px;">Momentos clave detectados sin solapamiento en el video.</p>
+          <p class="muted" style="font-size:12px; margin: 6px 0 12px;">Momentos clave con 0% solapamiento bifurcados en el árbol.</p>
           <div id="drawer-clips-list" class="clips-list"></div>
         </section>
 
@@ -80,7 +112,7 @@
         </section>
 
         <section class="drawer-section">
-          <h3>Datos intermedios</h3>
+          <h3>Datos del nodo</h3>
           <pre id="drawer-data" class="code"></pre>
         </section>
 

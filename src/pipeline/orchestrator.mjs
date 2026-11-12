@@ -1,13 +1,9 @@
-// Orquestador del pipeline de RuntimeClips.
+// Orquestador del pipeline en árbol (Fork/Join) de RuntimeClips.
 //
-// Ejecuta los 9 nodos en orden con los módulos reales (downloader, transcriber,
-// hook_detector, reframe, overlays, captions, renderer). Cada etapa es una
-// función `async (ctx, onProgress) => data`: `data` es lo que el dashboard
-// muestra al inspeccionar el nodo y `ctx` lleva los resultados intermedios a
-// las etapas siguientes.
-//
-// También es el CLI:  npm run clip -- <url|ruta> [--lang es] [--draft]
-//                       [--start 12.5 --end 58] [--accent "#ffe600"] [--workers 1]
+// Estructura en tres fases:
+// 1. Tronco Común: Ingesta, sondeo, transcripción local y detección de todos los clips virales.
+// 2. Bifurcación (Fan-Out): Ejecución concurrente por ramas independientes (reframe -> overlays -> captions -> render).
+// 3. Convergencia (Fan-In): Empaquetado maestro en .zip (Collector) y reproductor multi-clip (Player).
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -20,17 +16,27 @@ import { reframe } from './reframe.mjs';
 import { buildOverlays } from './overlays.mjs';
 import { buildCaptions } from './captions.mjs';
 import { prepareProject, renderClip } from './renderer.mjs';
+import { createZipArchive } from './packager.mjs';
 
-export const PIPELINE_NODES = [
+export const TRUNK_NODES = [
   { key: 'input', label: 'Input', subtitle: 'YouTube URL / Local', icon: '🔗' },
   { key: 'ingest', label: 'Ingest & Probe', subtitle: 'yt-dlp + FFmpeg', icon: '⬇️' },
   { key: 'transcribe', label: 'Local Transcribe', subtitle: 'Parakeet / Whisper', icon: '🎙️' },
-  { key: 'hook', label: 'Hook & Clip Selector', subtitle: 'Detección de 30-60 s', icon: '🎯' },
+  { key: 'hook', label: 'Hook & Clip Selector', subtitle: 'Detección Multi-Clip', icon: '🎯' },
+];
+
+export const JOIN_NODES = [
+  { key: 'collector', label: 'ZIP Packager', subtitle: 'Empaquetado .zip', icon: '📦' },
+  { key: 'player', label: 'Multi-Clip Player', subtitle: 'Galería y Descarga', icon: '▶️' },
+];
+
+export const PIPELINE_NODES = [
+  ...TRUNK_NODES,
   { key: 'reframe', label: 'Full-Screen Reframe', subtitle: 'Centrado facial 9:16', icon: '🧑' },
   { key: 'overlays', label: 'Motion Overlays', subtitle: 'Capas GSAP transparentes', icon: '✨' },
   { key: 'captions', label: 'Karaoke Captions', subtitle: 'Alineación palabra/palabra', icon: '💬' },
   { key: 'render', label: 'Render & Audio QA', subtitle: 'FFmpeg a -14 LUFS', icon: '🎬' },
-  { key: 'player', label: 'Final Player', subtitle: 'Previsualización y descarga', icon: '▶️' },
+  ...JOIN_NODES,
 ];
 
 const rel = (file) => path.relative(ROOT, file).replaceAll('\\', '/');
@@ -49,12 +55,28 @@ async function toolVersion(name, args, pattern) {
   return pattern.exec(`${stdout}\n${stderr}`)?.[1] ?? 'desconocida';
 }
 
-const STAGES = {
-  // Valida el origen, comprueba las herramientas y crea la carpeta del proyecto.
+/**
+ * Ejecutor en cola de concurrencia acotada (Worker Pool)
+ */
+async function runWorkerPool(items, concurrency, workerFn) {
+  let index = 0;
+  const poolSize = Math.max(1, Math.min(concurrency, items.length));
+  const workers = Array.from({ length: poolSize }, async () => {
+    while (index < items.length) {
+      const currentIdx = index++;
+      await workerFn(items[currentIdx], currentIdx);
+    }
+  });
+  await Promise.all(workers);
+}
+
+// ── FASE 1: Tronco Común ─────────────────────────────────────────────────────
+
+const TRUNK_STAGES = {
   async input(ctx, onProgress) {
     const { job } = ctx;
     ctx.projectDir = path.join(ROOT, 'projects', job.runId);
-    ctx.clipFile = prepareProject(ctx.projectDir);
+    mkdirSync(ctx.projectDir, { recursive: true });
     ctx.log('info', `Origen (${job.sourceType}): ${job.url}`);
     onProgress(0.3);
 
@@ -67,7 +89,6 @@ const STAGES = {
     };
     requireTool('ffprobe');
     ctx.log('info', `Herramientas: ${Object.entries(tools).map(([name, version]) => `${name} ${version}`).join(' · ')}`);
-    ctx.log('info', `Proyecto: ${rel(ctx.projectDir)} · telemetría de HyperFrames desactivada (${toolEnv().HYPERFRAMES_NO_TELEMETRY === '1' ? 'ok' : 'no'})`);
     return { source: job.url, sourceType: job.sourceType, options: job.options, projectDir: rel(ctx.projectDir), tools };
   },
 
@@ -91,13 +112,6 @@ const STAGES = {
       videoCodec: `${media.videoCodec} (${media.pixFmt})`,
       audioCodec: media.audioCodec,
       sampleRate: media.sampleRate,
-      original: {
-        resolution: `${media.sourceProbe.width}x${media.sourceProbe.height}`,
-        fps: media.sourceProbe.fps,
-        variableFps: media.sourceProbe.variableFps,
-        videoCodec: media.sourceProbe.videoCodec,
-        audioCodec: media.sourceProbe.audioCodec,
-      },
     };
   },
 
@@ -113,10 +127,8 @@ const STAGES = {
       language: transcript.language,
       sentences: transcript.sentences.length,
       words: transcript.words.length,
-      fixedWords: transcript.fixedWords,
       transcript: rel(transcript.transcriptPath),
-      sample: transcript.words.slice(0, 8),
-      preview: transcript.words.slice(0, 40).map((w) => w.text).join(' '),
+      preview: transcript.words.slice(0, 30).map((w) => w.text).join(' '),
     };
   },
 
@@ -124,109 +136,201 @@ const STAGES = {
     const { words, sentences } = ctx.transcript;
     onProgress(0.2);
     ctx.hook = detectHook(
-      { words, sentences, durationSec: ctx.media.durationSec, options: { multi: true, ...(ctx.job.options || {}) } },
+      { words, sentences, durationSec: ctx.media.durationSec, options: ctx.job.options || {} },
       { log: ctx.log },
     );
     const { hook } = ctx;
-    // Palabras del clip con tiempos relativos a su inicio: es lo que consumen overlays y subtítulos.
-    ctx.clipWords = words
-      .filter((w) => w.start >= hook.startSec - 0.05 && w.end <= hook.endSec + 0.05)
-      .map((w) => ({
-        text: w.text,
-        start: Number(Math.max(0, w.start - hook.startSec).toFixed(3)),
-        end: Number(Math.min(hook.durationSec, w.end - hook.startSec).toFixed(3)),
-      }));
-    if (!ctx.clipWords.length) ctx.log('warn', 'La ventana elegida no contiene palabras: el clip saldrá sin subtítulos');
-    ctx.log('info', `Clip principal: ${fmtClock(hook.startSec)} → ${fmtClock(hook.endSec)} (${hook.durationSec.toFixed(1)} s)${hook.score === null ? '' : ` · Score ${Math.round((hook.score || 0) * 100)}%`}`);
-    for (const reason of hook.reasons) ctx.log('info', `· ${reason}`);
     writeFileSync(path.join(ctx.projectDir, 'hook.json'), `${JSON.stringify(hook, null, 2)}\n`);
+
     const { firstWord, lastWord, candidates, clips, ...selected } = hook;
     return {
-      window: [hook.startSec, hook.endSec],
       selected,
       clips: clips || [selected],
       totalClips: (clips || [selected]).length,
-      text: ctx.clipWords.map((w) => w.text).join(' '),
       evaluated: hook.evaluated,
-      alternatives: candidates.map(({ startSec, endSec, score, hook: opening, reasons }) => ({ startSec, endSec, score, hook: opening, reasons })),
-    };
-  },
-
-  async reframe(ctx, onProgress) {
-    ctx.frame = await reframe(
-      { video: ctx.media.video, startSec: ctx.hook.startSec, endSec: ctx.hook.endSec, output: ctx.clipFile, options: ctx.job.options },
-      { log: ctx.log, onProgress },
-    );
-    return { ...ctx.frame, output: rel(ctx.frame.output) };
-  },
-
-  async overlays(ctx, onProgress) {
-    onProgress(0.2);
-    return buildOverlays(
-      { projectDir: ctx.projectDir, words: ctx.clipWords, durationSec: ctx.frame.durationSec, options: ctx.job.options },
-      { log: ctx.log },
-    );
-  },
-
-  async captions(ctx, onProgress) {
-    onProgress(0.2);
-    return buildCaptions(
-      { projectDir: ctx.projectDir, words: ctx.clipWords, durationSec: ctx.frame.durationSec },
-      { log: ctx.log },
-    );
-  },
-
-  async render(ctx, onProgress) {
-    const { job } = ctx;
-    const name = [slugify(ctx.media.meta.title) || 'clip', job.runId].join('-');
-    mkdirSync(job.rendersDir, { recursive: true });
-    ctx.render = await renderClip(
-      { projectDir: ctx.projectDir, outFile: path.join(job.rendersDir, `${name}.mp4`), durationSec: ctx.frame.durationSec, options: job.options },
-      { log: ctx.log, onProgress },
-    );
-    ctx.output = { videoUrl: `/renders/${encodeURIComponent(ctx.render.file)}`, fileName: ctx.render.file };
-    const { path: _absolute, ...data } = ctx.render;
-    return data;
-  },
-
-  async player(ctx, onProgress) {
-    onProgress(0.5);
-    ctx.log('info', `Reel listo: renders/${ctx.render.file} (${ctx.render.sizeMb} MB, ${ctx.render.durationSec.toFixed(1)} s)`);
-    return {
-      ...ctx.output,
-      title: ctx.media.meta.title ?? null,
-      hook: ctx.hook.hook,
-      sourceWindow: `${fmtClock(ctx.hook.startSec)} → ${fmtClock(ctx.hook.endSec)}`,
-      durationSec: ctx.render.durationSec,
-      sizeMb: ctx.render.sizeMb,
-      qa: ctx.render.qa.pass ? 'LISTO' : 'REVISAR',
-      clips: ctx.hook.clips || [],
-      totalClipsDiscovered: ctx.hook.clips ? ctx.hook.clips.length : 1,
+      theoreticalMax: hook.theoreticalMax,
     };
   },
 };
 
-// Ejecuta los 9 nodos en orden. `emit.node(key, patch)` y `emit.log(level, msg, key)`
-// son provistos por el servidor y se retransmiten por SSE.
+// ── FASE 2: Ramas Paralelas por Clip ─────────────────────────────────────────
+
+async function runClipBranch(ctx, clip, clipIdx, emit) {
+  const cid = clip.clipId;
+  const k = clipIdx + 1;
+  const clipDir = path.join(ctx.projectDir, cid);
+  mkdirSync(clipDir, { recursive: true });
+  const clipFile = prepareProject(clipDir);
+
+  const words = ctx.transcript.words;
+  const clipWords = words
+    .filter((w) => w.start >= clip.startSec - 0.05 && w.end <= clip.endSec + 0.05)
+    .map((w) => ({
+      text: w.text,
+      start: Number(Math.max(0, w.start - clip.startSec).toFixed(3)),
+      end: Number(Math.min(clip.durationSec, w.end - clip.startSec).toFixed(3)),
+    }));
+
+  async function execNode(nodeKey, label, fn) {
+    const startedAt = Date.now();
+    emit.node(nodeKey, { status: 'running', progress: 0, startedAt });
+    emit.log('info', `▶ [Clip #${k}] ${label} iniciado`, nodeKey);
+    let lastProgress = 0;
+    const onProgress = (val) => {
+      const p = Math.min(0.99, Math.max(lastProgress, Number(val) || 0));
+      if (p !== lastProgress) {
+        lastProgress = p;
+        emit.node(nodeKey, { progress: p });
+      }
+    };
+    try {
+      const data = await fn(onProgress);
+      const finishedAt = Date.now();
+      emit.node(nodeKey, { status: 'completed', progress: 1, finishedAt, durationMs: finishedAt - startedAt, data });
+      emit.log('success', `✔ [Clip #${k}] ${label} completado en ${finishedAt - startedAt} ms`, nodeKey);
+      return data;
+    } catch (err) {
+      const finishedAt = Date.now();
+      emit.node(nodeKey, { status: 'error', finishedAt, durationMs: finishedAt - startedAt, error: err.message });
+      emit.log('error', `✖ [Clip #${k}] ${label}: ${err.message}`, nodeKey);
+      throw err;
+    }
+  }
+
+  // 1. Reframe
+  const frame = await execNode(`reframe-${cid}`, 'Reframe 9:16', (onProgress) =>
+    reframe(
+      { video: ctx.media.video, startSec: clip.startSec, endSec: clip.endSec, output: clipFile, options: ctx.job.options },
+      { log: (lvl, msg) => emit.log(lvl, msg, `reframe-${cid}`), onProgress },
+    )
+  );
+
+  // 2. Overlays
+  await execNode(`overlays-${cid}`, 'Motion Overlays', (onProgress) => {
+    onProgress(0.2);
+    return buildOverlays(
+      { projectDir: clipDir, words: clipWords, durationSec: frame.durationSec, options: ctx.job.options },
+      { log: (lvl, msg) => emit.log(lvl, msg, `overlays-${cid}`) },
+    );
+  });
+
+  // 3. Captions
+  await execNode(`captions-${cid}`, 'Karaoke Captions', (onProgress) => {
+    onProgress(0.2);
+    return buildCaptions(
+      { projectDir: clipDir, words: clipWords, durationSec: frame.durationSec },
+      { log: (lvl, msg) => emit.log(lvl, msg, `captions-${cid}`) },
+    );
+  });
+
+  // 4. Render & QA
+  const clipSlug = slugify(clip.title || clip.hook || `clip-${k}`);
+  const outFileName = `${clipSlug}-${ctx.job.runId}-${cid}.mp4`;
+  const outFilePath = path.join(ctx.job.rendersDir, outFileName);
+
+  const renderResult = await execNode(`render-${cid}`, 'Render & Audio QA', (onProgress) =>
+    renderClip(
+      { projectDir: clipDir, outFile: outFilePath, durationSec: frame.durationSec, options: ctx.job.options },
+      { log: (lvl, msg) => emit.log(lvl, msg, `render-${cid}`), onProgress },
+    )
+  );
+
+  return {
+    clipId: cid,
+    rank: k,
+    title: clip.title,
+    hook: clip.hook,
+    score: clip.score,
+    scorePercent: clip.scorePercent,
+    startSec: clip.startSec,
+    endSec: clip.endSec,
+    durationSec: renderResult.durationSec,
+    file: outFileName,
+    filePath: outFilePath,
+    videoUrl: `/renders/${encodeURIComponent(outFileName)}`,
+    sizeMb: renderResult.sizeMb,
+    qa: renderResult.qa,
+  };
+}
+
+// ── FASE 3: Convergencia (Collector & ZIP) ───────────────────────────────────
+
+async function runCollector(ctx, renderedClips, emit) {
+  const nodeKey = 'collector';
+  const startedAt = Date.now();
+  emit.node(nodeKey, { status: 'running', progress: 0, startedAt });
+  emit.log('info', `Iniciando empaquetado de ${renderedClips.length} clips en .zip…`, nodeKey);
+
+  const zipName = [slugify(ctx.media.meta.title) || 'runtimeclips', ctx.job.runId, 'all-clips.zip'].join('-');
+  const zipPath = path.join(ctx.job.rendersDir, zipName);
+
+  const zipResult = await createZipArchive(
+    renderedClips.map((c) => c.filePath),
+    zipPath,
+    { log: (lvl, msg) => emit.log(lvl, msg, nodeKey) }
+  );
+
+  const finishedAt = Date.now();
+  const data = {
+    zipFile: zipResult.zipFile,
+    zipUrl: `/renders/${encodeURIComponent(zipResult.zipFile)}`,
+    zipSizeMb: zipResult.sizeMb,
+    totalClips: renderedClips.length,
+    clips: renderedClips,
+  };
+  emit.node(nodeKey, { status: 'completed', progress: 1, finishedAt, durationMs: finishedAt - startedAt, data });
+  emit.log('success', `✔ Paquete ZIP creado: ${zipResult.zipFile} (${zipResult.sizeMb} MB) con ${renderedClips.length} clips`, nodeKey);
+  return data;
+}
+
+// ── FASE 4: Reproductor Final Multi-Clip ──────────────────────────────────────
+
+async function runPlayer(ctx, renderedClips, collectorData, emit) {
+  const nodeKey = 'player';
+  const startedAt = Date.now();
+  emit.node(nodeKey, { status: 'running', progress: 0.5, startedAt });
+
+  const bestClip = renderedClips[0] || null;
+  ctx.output = {
+    title: ctx.media.meta.title ?? 'Reels',
+    zipUrl: collectorData.zipUrl,
+    zipFile: collectorData.zipFile,
+    zipSizeMb: collectorData.zipSizeMb,
+    totalClips: renderedClips.length,
+    videoUrl: bestClip ? bestClip.videoUrl : null,
+    fileName: bestClip ? bestClip.file : null,
+    clips: renderedClips,
+  };
+
+  const finishedAt = Date.now();
+  emit.node(nodeKey, { status: 'completed', progress: 1, finishedAt, durationMs: finishedAt - startedAt, data: ctx.output });
+  emit.log('success', `✔ Proceso completado: ${renderedClips.length} clips listos con descarga individual y paquete .ZIP`, nodeKey);
+  return ctx.output;
+}
+
+// ── Ejecutor Principal del Árbol (runPipeline) ───────────────────────────────
+
 export async function runPipeline(job, emit) {
   const ctx = { job, emit, output: null };
-  for (const node of PIPELINE_NODES) {
+
+  // 1. Tronco común
+  for (const node of TRUNK_NODES) {
     const startedAt = Date.now();
     emit.node(node.key, { status: 'running', progress: 0, startedAt });
     emit.log('info', `▶ ${node.label} iniciado`, node.key);
     ctx.log = (level, message) => emit.log(level, message, node.key);
-    // El progreso se emite como mucho cada 100 ms y nunca retrocede.
+
     let lastProgress = 0;
-    let lastEmit = 0;
     const onProgress = (value) => {
       const progress = Math.min(0.99, Math.max(lastProgress, Number(value) || 0));
-      if (progress === lastProgress || Date.now() - lastEmit < 100) return;
-      lastProgress = progress;
-      lastEmit = Date.now();
-      emit.node(node.key, { progress });
+      if (progress !== lastProgress) {
+        lastProgress = progress;
+        emit.node(node.key, { progress });
+      }
     };
+
     try {
-      const data = await STAGES[node.key](ctx, onProgress);
+      const data = await TRUNK_STAGES[node.key](ctx, onProgress);
       const finishedAt = Date.now();
       emit.node(node.key, { status: 'completed', progress: 1, finishedAt, durationMs: finishedAt - startedAt, data });
       emit.log('success', `✔ ${node.label} completado en ${finishedAt - startedAt} ms`, node.key);
@@ -237,7 +341,83 @@ export async function runPipeline(job, emit) {
       throw err;
     }
   }
-  return ctx.output;
+
+  // 2. Selección de clips objetivo para las ramas
+  let targetClips = ctx.hook.clips || [];
+  if (job.options.clipLimit && job.options.clipLimit !== 'all') {
+    const limit = Number(job.options.clipLimit);
+    if (limit > 0) targetClips = targetClips.slice(0, limit);
+  } else if (Number(job.options.maxClips) > 0) {
+    targetClips = targetClips.slice(0, Number(job.options.maxClips));
+  }
+  if (!targetClips.length && ctx.hook.startSec != null) {
+    targetClips = [{ ...ctx.hook, clipId: 'clip-01', rank: 1 }];
+  }
+
+  // 3. Expansión del grafo en árbol en el servidor y SSE
+  const branchNodes = [];
+  const edges = [
+    { from: 'input', to: 'ingest' },
+    { from: 'ingest', to: 'transcribe' },
+    { from: 'transcribe', to: 'hook' },
+  ];
+
+  targetClips.forEach((clip, idx) => {
+    const k = idx + 1;
+    const cid = clip.clipId;
+    const shortTitle = (clip.title || clip.hook || `Clip ${k}`).slice(0, 22);
+
+    branchNodes.push(
+      { key: `reframe-${cid}`, label: `Reframe #${k}`, subtitle: `Facial · ${shortTitle}`, icon: '🧑', branchId: cid, clipIndex: idx },
+      { key: `overlays-${cid}`, label: `Overlays #${k}`, subtitle: 'Motion GSAP', icon: '✨', branchId: cid, clipIndex: idx },
+      { key: `captions-${cid}`, label: `Captions #${k}`, subtitle: 'Karaoke sync', icon: '💬', branchId: cid, clipIndex: idx },
+      { key: `render-${cid}`, label: `Render #${k}`, subtitle: 'FFmpeg -14 LUFS', icon: '🎬', branchId: cid, clipIndex: idx },
+    );
+
+    edges.push(
+      { from: 'hook', to: `reframe-${cid}` },
+      { from: `reframe-${cid}`, to: `overlays-${cid}` },
+      { from: `overlays-${cid}`, to: `captions-${cid}` },
+      { from: `captions-${cid}`, to: `render-${cid}` },
+      { from: `render-${cid}`, to: 'collector' },
+    );
+  });
+
+  edges.push({ from: 'collector', to: 'player' });
+
+  if (typeof emit.expandGraph === 'function') {
+    emit.expandGraph({
+      trunkNodes: TRUNK_NODES,
+      branchNodes,
+      joinNodes: JOIN_NODES,
+      edges,
+      totalBranches: targetClips.length,
+    });
+  }
+
+  // 4. Ejecución concurrente por ramas con Worker Pool
+  const concurrency = Math.max(1, Math.min(6, Number(job.options.workers) || 2));
+  emit.log('info', `Abriendo ${targetClips.length} ramas en paralelo (concurrencia: ${concurrency} workers)…`, 'hook');
+
+  const renderedClips = [];
+  await runWorkerPool(targetClips, concurrency, async (clip, clipIdx) => {
+    try {
+      const result = await runClipBranch(ctx, clip, clipIdx, emit);
+      if (result) renderedClips.push(result);
+    } catch (err) {
+      emit.log('error', `Error en rama Clip #${clipIdx + 1}: ${err.message}`, `render-${clip.clipId}`);
+    }
+  });
+
+  if (!renderedClips.length) {
+    throw new Error('Ninguna rama de clip pudo renderizarse con éxito.');
+  }
+
+  // 5. Convergencia en Collector (Empaquetado ZIP)
+  const collectorData = await runCollector(ctx, renderedClips, emit);
+
+  // 6. Convergencia en Player (Multi-clip reproductor)
+  return runPlayer(ctx, renderedClips, collectorData, emit);
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
@@ -257,7 +437,7 @@ async function main() {
     options[key] = next !== undefined && !next.startsWith('--') ? args[++i] : true;
   }
   if (!source) {
-    console.error('Uso: npm run clip -- <URL de YouTube | ruta local> [--lang es] [--draft] [--start S --end S] [--accent "#ffe600"] [--workers 1]');
+    console.error('Uso: npm run clip -- <URL de YouTube | ruta local> [--workers 2] [--clipLimit 5]');
     process.exit(1);
   }
   const isUrl = /^https?:\/\//i.test(source);
@@ -275,12 +455,13 @@ async function main() {
   const stamp = () => new Date().toISOString().slice(11, 19);
   const emit = {
     node() {},
-    log: (level, message, node) => console.log(`${stamp()} ${level.padEnd(7)} ${(node ?? 'pipeline').padEnd(10)} ${message}`),
+    expandGraph() {},
+    log: (level, message, node) => console.log(`${stamp()} ${level.padEnd(7)} ${(node ?? 'pipeline').padEnd(14)} ${message}`),
     pipeline() {},
   };
   try {
     const output = await runPipeline(job, emit);
-    console.log(`\nReel: renders/${output.fileName}`);
+    console.log(`\n🎉 Completado: ${output.totalClips} clips empaquetados en ${output.zipFile}`);
   } catch (err) {
     console.error(`\nPipeline detenido: ${err.message}`);
     process.exit(1);

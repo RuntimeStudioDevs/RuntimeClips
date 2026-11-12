@@ -1,14 +1,14 @@
-// RuntimeClips — servidor local: API REST + SSE para el grafo observable.
+// RuntimeClips — servidor local: API REST + SSE para el grafo en árbol observable.
 //
-//   GET  /api/pipeline/stream  → Server-Sent Events (snapshot, node, log, pipeline)
-//   POST /api/pipeline/start   → { url, options } inicia una ejecución
-//   GET  /api/pipeline/status  → estado actual del pipeline, nodos y logs
+//   GET  /api/pipeline/stream  → Server-Sent Events (snapshot, node, log, pipeline, graph_expanded)
+//   POST /api/pipeline/start   → { url, options } inicia una ejecución en árbol
+//   GET  /api/pipeline/status  → estado actual del pipeline, nodos, aristas y logs
 
 import express from 'express';
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { PIPELINE_NODES, runPipeline } from './src/pipeline/orchestrator.mjs';
+import { TRUNK_NODES, JOIN_NODES, runPipeline } from './src/pipeline/orchestrator.mjs';
 import { listBrands } from './src/pipeline/brand.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -22,8 +22,14 @@ mkdirSync(RENDERS_DIR, { recursive: true });
 
 // ── Estado en memoria ────────────────────────────────────────────────────────
 
+const TRUNK_EDGES = [
+  { from: 'input', to: 'ingest' },
+  { from: 'ingest', to: 'transcribe' },
+  { from: 'transcribe', to: 'hook' },
+];
+
 const freshNodes = () =>
-  PIPELINE_NODES.map((node, index) => ({
+  TRUNK_NODES.map((node, index) => ({
     ...node,
     index,
     status: 'idle',
@@ -46,11 +52,13 @@ const pipeline = {
   error: null,
   output: null,
 };
+
 let nodes = freshNodes();
+let edges = [...TRUNK_EDGES];
 let logs = [];
 let logSeq = 0;
 
-const snapshot = () => ({ pipeline, nodes, logs });
+const snapshot = () => ({ pipeline, nodes, edges, logs });
 
 // ── SSE ──────────────────────────────────────────────────────────────────────
 
@@ -64,6 +72,26 @@ function broadcast(event, payload) {
 }
 
 const emit = {
+  expandGraph({ trunkNodes, branchNodes, joinNodes, edges: newEdges, totalBranches }) {
+    const combined = [...trunkNodes, ...branchNodes, ...joinNodes].map((n, i) => {
+      const existing = nodes.find((x) => x.key === n.key);
+      return existing || {
+        ...n,
+        index: i,
+        status: 'idle',
+        progress: 0,
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null,
+        data: null,
+        error: null,
+      };
+    });
+    nodes = combined;
+    edges = newEdges;
+    broadcast('graph_expanded', { nodes, edges, totalBranches });
+    broadcast('snapshot', snapshot());
+  },
   node(key, patch) {
     const node = nodes.find((n) => n.key === key);
     if (!node) return;
@@ -99,6 +127,7 @@ function classifySource(input) {
 
 async function startRun(url, sourceType, options) {
   nodes = freshNodes();
+  edges = [...TRUNK_EDGES];
   logs = [];
   Object.assign(pipeline, {
     runId: Date.now().toString(36),

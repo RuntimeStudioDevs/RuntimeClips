@@ -1,4 +1,4 @@
-// RuntimeClips — dashboard: grafo de nodos, cables animados, logs SSE, drawer y reproductor.
+// RuntimeClips — dashboard en árbol: grafo dinámico Fork/Join, cables animados, logs SSE, drawer y reproductor multi-clip.
 
 const NODE_W = 220;
 const NODE_H = 84;
@@ -9,14 +9,16 @@ const $ = (selector) => document.querySelector(selector);
 
 const state = {
   pipeline: { status: 'idle', output: null },
-  nodes: new Map(), // key → nodo (tal como lo envía el servidor)
+  nodes: new Map(), // key → nodo
   order: [],
+  edgesData: [],
   logs: [],
   selected: null,
+  activePreviewClip: null,
 };
 
 const view = { x: 0, y: 0, k: 1 };
-const positions = new Map(); // key → { x, y } en coordenadas del mundo
+const positions = new Map(); // key → { x, y }
 const nodeEls = new Map();
 const edges = []; // { from, to, group, path, motions }
 
@@ -56,21 +58,49 @@ function fmtTime(ts) {
 const elapsed = (node) =>
   node.durationMs ?? (node.status === 'running' && node.startedAt ? Date.now() - node.startedAt : null);
 
-// ── Grafo ────────────────────────────────────────────────────────────────────
+// ── Auto-Layout de Grafo en Árbol (DAG) ───────────────────────────────────────
 
-// Dos filas: nodos 1-5 arriba, 6-9 abajo.
-const defaultPosition = (index) =>
-  index < 5 ? { x: 40 + index * 290, y: 60 } : { x: 185 + (index - 5) * 290, y: 280 };
+function calculateTreePositions(nodesList) {
+  positions.clear();
+  // Identificar ramas por branchId
+  const branches = [...new Set(nodesList.filter((n) => n.branchId).map((n) => n.branchId))];
+  const branchCount = branches.length;
+  const rowHeight = 110;
+  const centerY = branchCount > 0 ? 60 + ((branchCount - 1) * rowHeight) / 2 : 140;
+
+  // Tronco inicial
+  const trunkX = { input: 40, ingest: 310, transcribe: 580, hook: 850 };
+  const joinX = { collector: 2240, player: 2520 };
+
+  nodesList.forEach((node, index) => {
+    if (trunkX[node.key] !== undefined) {
+      positions.set(node.key, { x: trunkX[node.key], y: centerY });
+    } else if (joinX[node.key] !== undefined) {
+      positions.set(node.key, { x: joinX[node.key], y: centerY });
+    } else if (node.branchId) {
+      const branchIdx = branches.indexOf(node.branchId);
+      const rowY = 60 + branchIdx * rowHeight;
+      if (node.key.startsWith('reframe-')) positions.set(node.key, { x: 1140, y: rowY });
+      else if (node.key.startsWith('overlays-')) positions.set(node.key, { x: 1410, y: rowY });
+      else if (node.key.startsWith('captions-')) positions.set(node.key, { x: 1680, y: rowY });
+      else if (node.key.startsWith('render-')) positions.set(node.key, { x: 1950, y: rowY });
+      else positions.set(node.key, { x: 1140 + (index % 4) * 270, y: rowY });
+    } else {
+      positions.set(node.key, { x: 40 + index * 270, y: centerY });
+    }
+  });
+}
 
 function edgePath(from, to) {
   const a = positions.get(from);
   const b = positions.get(to);
+  if (!a || !b) return '';
   const sx = a.x + NODE_W;
   const sy = a.y + NODE_H / 2;
   const tx = b.x;
   const ty = b.y + NODE_H / 2;
   const dx = tx - sx;
-  const bend = dx >= 0 ? Math.max(50, dx / 2) : Math.min(240, 90 + Math.abs(dx) / 6);
+  const bend = dx >= 0 ? Math.max(45, dx / 2) : 80;
   return `M ${sx} ${sy} C ${sx + bend} ${sy}, ${tx - bend} ${ty}, ${tx} ${ty}`;
 }
 
@@ -80,15 +110,21 @@ function updateEdgeGeometry(edge) {
   for (const motion of edge.motions) motion.setAttribute('path', d);
 }
 
-function buildGraph(nodes) {
-  nodes.forEach((node, index) => {
-    positions.set(node.key, defaultPosition(index));
+function buildGraph(nodesList, edgesList = []) {
+  // Limpiar elementos previos
+  nodeEls.forEach((el) => el.remove());
+  nodeEls.clear();
+  edgesSvg.replaceChildren();
+  edges.length = 0;
 
-    const el = h('div', { class: 'node', 'data-key': node.key, 'data-status': 'idle' },
+  calculateTreePositions(nodesList);
+
+  nodesList.forEach((node, index) => {
+    const el = h('div', { class: 'node', 'data-key': node.key, 'data-status': node.status || 'idle' },
       h('span', { class: 'port in' }),
       h('div', { class: 'node-icon', text: node.icon }),
       h('div', { class: 'node-body' },
-        h('div', { class: 'node-idx', text: String(index + 1).padStart(2, '0') }),
+        h('div', { class: 'node-idx', text: node.branchId ? `${node.branchId.toUpperCase()}` : String(index + 1).padStart(2, '0') }),
         h('div', { class: 'node-title', text: node.label }),
         h('div', { class: 'node-sub', text: node.subtitle }),
       ),
@@ -101,29 +137,39 @@ function buildGraph(nodes) {
     attachNodeDrag(el, node.key);
     world.append(el);
     nodeEls.set(node.key, el);
-
-    if (index > 0) {
-      const edge = { from: nodes[index - 1].key, to: node.key, group: svg('g', { class: 'edge-group', 'data-state': 'idle' }), path: svg('path', { class: 'edge' }), motions: [] };
-      edge.group.append(edge.path);
-      for (const begin of ['0s', '-0.6s']) {
-        const pulse = svg('circle', { class: 'pulse', r: 4 });
-        const motion = svg('animateMotion', { dur: '1.2s', begin, repeatCount: 'indefinite' });
-        pulse.append(motion);
-        edge.group.append(pulse);
-        edge.motions.push(motion);
-      }
-      edgesSvg.append(edge.group);
-      edges.push(edge);
-      updateEdgeGeometry(edge);
-    }
   });
+
+  // Construir aristas
+  edgesList.forEach((e) => {
+    if (!positions.has(e.from) || !positions.has(e.to)) return;
+    const edge = {
+      from: e.from,
+      to: e.to,
+      group: svg('g', { class: 'edge-group', 'data-state': 'idle' }),
+      path: svg('path', { class: 'edge' }),
+      motions: [],
+    };
+    edge.group.append(edge.path);
+    for (const begin of ['0s', '-0.6s']) {
+      const pulse = svg('circle', { class: 'pulse', r: 4 });
+      const motion = svg('animateMotion', { dur: '1.2s', begin, repeatCount: 'indefinite' });
+      pulse.append(motion);
+      edge.group.append(pulse);
+      edge.motions.push(motion);
+    }
+    edgesSvg.append(edge.group);
+    edges.push(edge);
+    updateEdgeGeometry(edge);
+  });
+
   fitView();
 }
 
 function placeNode(el, key) {
-  const { x, y } = positions.get(key);
-  el.style.left = `${x}px`;
-  el.style.top = `${y}px`;
+  const pos = positions.get(key);
+  if (!pos) return;
+  el.style.left = `${pos.x}px`;
+  el.style.top = `${pos.y}px`;
 }
 
 function renderNode(key) {
@@ -136,7 +182,6 @@ function renderNode(key) {
   el.querySelector('.node-meta').textContent = node.status === 'idle' ? '' : fmtDuration(elapsed(node));
 }
 
-// Un cable refleja el estado del nodo al que alimenta.
 function renderEdges() {
   for (const edge of edges) {
     const status = state.nodes.get(edge.to)?.status;
@@ -159,35 +204,37 @@ function applyView() {
   canvas.style.backgroundSize = `${24 * view.k}px ${24 * view.k}px`;
 }
 
-function zoomAt(cx, cy, factor) {
-  const k = Math.min(2.5, Math.max(0.25, view.k * factor));
-  view.x = cx - (cx - view.x) * (k / view.k);
-  view.y = cy - (cy - view.y) * (k / view.k);
-  view.k = k;
-  applyView();
-}
-
 function fitView() {
-  if (!positions.size) return;
-  const pad = 70;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const { x, y } of positions.values()) {
-    minX = Math.min(minX, x); minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x + NODE_W); maxY = Math.max(maxY, y + NODE_H);
-  }
-  const { width, height } = canvas.getBoundingClientRect();
-  const w = maxX - minX + pad * 2;
-  const hgt = maxY - minY + pad * 2;
-  view.k = Math.min(width / w, height / hgt, 1.2);
-  view.x = (width - w * view.k) / 2 - (minX - pad) * view.k;
-  view.y = (height - hgt * view.k) / 2 - (minY - pad) * view.k;
+  const xs = [...positions.values()].map((p) => p.x);
+  const ys = [...positions.values()].map((p) => p.y);
+  if (!xs.length) return;
+  const minX = Math.min(...xs) - 40;
+  const maxX = Math.max(...xs) + NODE_W + 40;
+  const minY = Math.min(...ys) - 40;
+  const maxY = Math.max(...ys) + NODE_H + 40;
+  const graphW = maxX - minX;
+  const graphH = maxY - minY;
+  const { clientWidth: w, clientHeight: h } = canvas;
+  if (!w || !h) return;
+  view.k = Math.max(0.3, Math.min(1.0, 0.9 * Math.min(w / graphW, h / graphH)));
+  view.x = (w - graphW * view.k) / 2 - minX * view.k;
+  view.y = (h - graphH * view.k) / 2 - minY * view.k;
   applyView();
 }
 
+$('#zoom-in').addEventListener('click', () => {
+  view.k = Math.min(1.8, view.k * 1.2);
+  applyView();
+});
+$('#zoom-out').addEventListener('click', () => {
+  view.k = Math.max(0.25, view.k / 1.2);
+  applyView();
+});
+$('#zoom-fit').addEventListener('click', fitView);
+
+// Arrastre del lienzo
 canvas.addEventListener('pointerdown', (event) => {
-  if (event.target.closest('.node, .canvas-tools')) return;
-  canvas.setPointerCapture(event.pointerId);
-  canvas.classList.add('panning');
+  if (event.target.closest('.node') || event.target.closest('.canvas-tools')) return;
   const start = { x: event.clientX - view.x, y: event.clientY - view.y };
   const move = (e) => {
     view.x = e.clientX - start.x;
@@ -195,38 +242,20 @@ canvas.addEventListener('pointerdown', (event) => {
     applyView();
   };
   const up = () => {
-    canvas.classList.remove('panning');
-    canvas.removeEventListener('pointermove', move);
-    canvas.removeEventListener('pointerup', up);
-    canvas.removeEventListener('pointercancel', up);
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
   };
-  canvas.addEventListener('pointermove', move);
-  canvas.addEventListener('pointerup', up);
-  canvas.addEventListener('pointercancel', up);
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
 });
 
-canvas.addEventListener('wheel', (event) => {
-  event.preventDefault();
-  const rect = canvas.getBoundingClientRect();
-  zoomAt(event.clientX - rect.left, event.clientY - rect.top, event.deltaY < 0 ? 1.12 : 1 / 1.12);
-}, { passive: false });
-
-function zoomCenter(factor) {
-  const { width, height } = canvas.getBoundingClientRect();
-  zoomAt(width / 2, height / 2, factor);
-}
-$('#zoom-in').addEventListener('click', () => zoomCenter(1.25));
-$('#zoom-out').addEventListener('click', () => zoomCenter(1 / 1.25));
-$('#zoom-fit').addEventListener('click', fitView);
-window.addEventListener('resize', fitView);
-
-// Arrastrar mueve el nodo; un clic sin desplazamiento abre el drawer.
+// Arrastre individual de nodos
 function attachNodeDrag(el, key) {
   el.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return;
-    el.setPointerCapture(event.pointerId);
-    const origin = { ...positions.get(key) };
+    event.stopPropagation();
     const start = { x: event.clientX, y: event.clientY };
+    const origin = { ...positions.get(key) };
     let moved = false;
 
     const move = (e) => {
@@ -273,7 +302,7 @@ function renderDrawer() {
 
   $('#drawer-icon').textContent = node.icon;
   $('#drawer-title').textContent = node.label;
-  $('#drawer-sub').textContent = `Nodo ${node.index + 1} · ${node.subtitle}`;
+  $('#drawer-sub').textContent = node.subtitle;
   const status = $('#drawer-status');
   status.textContent = node.status;
   status.dataset.status = node.status;
@@ -293,11 +322,11 @@ function renderDrawer() {
   $('#drawer-error').textContent = node.error ?? '';
   $('#drawer-data').textContent = node.data ? JSON.stringify(node.data, null, 2) : 'Sin datos todavía.';
 
-  // Galería de clips virales si el nodo tiene clips descubiertos
-  const clips = node.data?.clips || (node.key === 'player' ? node.data?.clips : null);
+  // Galería de clips en el nodo hook
+  const clips = node.data?.clips;
   const clipsSection = $('#drawer-clips-section');
   if (clipsSection) {
-    if (clips && clips.length) {
+    if (node.key === 'hook' && clips && clips.length) {
       clipsSection.hidden = false;
       $('#clips-count-badge').textContent = `${clips.length} clips`;
       const list = $('#drawer-clips-list');
@@ -305,7 +334,7 @@ function renderDrawer() {
         ...clips.map((clip, idx) => {
           const card = h('div', { class: 'clip-card' });
           const head = h('div', { class: 'clip-card-head' },
-            h('span', { text: `Clip #${idx + 1}` }),
+            h('span', { text: `Rama #${idx + 1}` }),
             h('span', { class: 'clip-score', text: `${clip.scorePercent || Math.round((clip.score || 0) * 100)}% viral` }),
           );
           const title = h('div', { class: 'clip-title', text: clip.title || clip.hook });
@@ -313,18 +342,7 @@ function renderDrawer() {
             ? `⏱ ${clip.startClock} → ${clip.endClock} (${clip.durationSec.toFixed(1)}s)`
             : `⏱ ${clip.startSec.toFixed(1)}s → ${clip.endSec.toFixed(1)}s (${clip.durationSec.toFixed(1)}s)`;
           const time = h('div', { class: 'clip-time', text: timeText });
-          const btn = h('button', { class: 'clip-btn', type: 'button', text: '▶ Renderizar este clip' });
-          btn.addEventListener('click', () => {
-            fetch('/api/pipeline/start', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                url: state.pipeline.url,
-                options: { start: clip.startSec, end: clip.endSec },
-              }),
-            }).catch((err) => alert(err.message));
-          });
-          card.append(head, title, time, btn);
+          card.append(head, title, time);
           return card;
         }),
       );
@@ -336,30 +354,93 @@ function renderDrawer() {
   const nodeLogs = state.logs.filter((entry) => entry.node === node.key).slice(-60);
   $('#drawer-logs').replaceChildren(...nodeLogs.map((entry) => logLine(entry, false)));
 
-  renderPlayer(node.key === 'player');
+  renderPlayer(node.key === 'player' || node.key === 'collector');
 }
 
-// El <video> se conserva entre renders para no interrumpir la reproducción.
+// ── Multi-Player & ZIP Packager ──────────────────────────────────────────────
+
 function renderPlayer(visible) {
-  const video = $('#player-video');
-  const download = $('#player-download');
-  const videoUrl = state.pipeline.output?.videoUrl ?? null;
   $('#drawer-player').hidden = !visible;
   if (!visible) {
-    video.pause();
+    $('#player-video').pause();
     return;
   }
-  if (videoUrl && video.getAttribute('src') !== videoUrl) {
-    video.src = videoUrl;
-    download.href = videoUrl;
-    download.setAttribute('download', state.pipeline.output.fileName ?? 'reel.mp4');
-  } else if (!videoUrl && video.hasAttribute('src')) {
-    video.removeAttribute('src');
-    video.load();
+
+  const output = state.pipeline.output;
+  const zipBanner = $('#zip-package-banner');
+  const zipBtn = $('#player-zip-download');
+
+  // 1. Banner de ZIP maestro
+  if (output && output.zipUrl) {
+    zipBanner.hidden = false;
+    zipBtn.href = output.zipUrl;
+    zipBtn.setAttribute('download', output.zipFile || 'clips.zip');
+    zipBtn.textContent = `⬇ Descargar todos en .ZIP (${output.zipSizeMb || 0} MB)`;
+    $('#zip-banner-title').textContent = `${output.totalClips || 0} Reels Generados`;
+    $('#zip-banner-desc').textContent = `Paquete comprimido listo: ${output.zipFile}`;
+  } else {
+    zipBanner.hidden = true;
   }
-  video.hidden = !videoUrl;
-  download.hidden = !videoUrl;
-  $('#player-empty').hidden = Boolean(videoUrl);
+
+  // 2. Galería de Reels generados
+  const gallerySection = $('#player-gallery-section');
+  const galleryList = $('#player-gallery-list');
+  const clips = output?.clips || [];
+
+  if (clips.length) {
+    gallerySection.hidden = false;
+    // Seleccionar por defecto el primer clip si no hay activo
+    if (!state.activePreviewClip && clips[0]) state.activePreviewClip = clips[0];
+
+    galleryList.replaceChildren(
+      ...clips.map((clip, idx) => {
+        const isActive = state.activePreviewClip && state.activePreviewClip.file === clip.file;
+        const card = h('div', { class: `gallery-card ${isActive ? 'active' : ''}` });
+
+        const top = h('div', { class: 'gallery-card-top' },
+          h('span', { text: `Reel #${idx + 1}` }),
+          h('span', { class: 'clip-score', text: `${clip.scorePercent || 90}% viral` }),
+        );
+        const title = h('div', { class: 'gallery-card-title', text: clip.title || clip.hook });
+        const meta = h('div', { class: 'gallery-card-meta' },
+          h('span', { text: `⏱ ${clip.durationSec.toFixed(1)}s · ${clip.sizeMb} MB` }),
+          h('a', { class: 'gallery-dl-btn', href: clip.videoUrl, download: clip.file, text: '⬇ Descargar MP4' }),
+        );
+
+        card.addEventListener('click', (e) => {
+          if (e.target.tagName === 'A') return; // dejar actuar al enlace de descarga
+          state.activePreviewClip = clip;
+          renderPlayer(true);
+        });
+
+        card.append(top, title, meta);
+        return card;
+      }),
+    );
+  } else {
+    gallerySection.hidden = true;
+  }
+
+  // 3. Previsualizador de video HTML5
+  const video = $('#player-video');
+  const download = $('#player-download');
+  const currentClip = state.activePreviewClip || (output?.videoUrl ? { videoUrl: output.videoUrl, file: output.fileName } : null);
+
+  if (currentClip && currentClip.videoUrl) {
+    if (video.getAttribute('src') !== currentClip.videoUrl) {
+      video.src = currentClip.videoUrl;
+    }
+    download.href = currentClip.videoUrl;
+    download.setAttribute('download', currentClip.file || 'reel.mp4');
+    download.textContent = `⬇ Descargar "${currentClip.file || 'reel.mp4'}"`;
+    video.hidden = false;
+    download.hidden = false;
+    $('#player-empty').hidden = true;
+  } else {
+    video.hidden = true;
+    download.hidden = true;
+    $('#player-empty').hidden = false;
+  }
 }
 
 $('#drawer-close').addEventListener('click', () => selectNode(null));
@@ -393,7 +474,7 @@ function resetLogs(entries) {
 
 $('#log-clear').addEventListener('click', () => resetLogs([]));
 
-// ── Pipeline / formulario ────────────────────────────────────────────────────
+// ── Pipeline / Formulario ────────────────────────────────────────────────────
 
 function renderPipeline() {
   const { status } = state.pipeline;
@@ -401,7 +482,7 @@ function renderPipeline() {
   chip.textContent = status;
   chip.dataset.status = status;
   $('#start-btn').disabled = status === 'running';
-  $('#start-btn').textContent = status === 'running' ? '⏳ Procesando…' : '▶ Generar clip';
+  $('#start-btn').textContent = status === 'running' ? '⏳ Procesando Árbol…' : '▶ Procesar Árbol';
 }
 
 function showFormError(message) {
@@ -415,11 +496,16 @@ $('#start-form').addEventListener('submit', async (event) => {
   showFormError(null);
   const url = $('#url-input').value.trim();
   if (!url) return;
+  const clipLimit = $('#clip-limit-select')?.value || 'all';
+  const workers = Number($('#workers-select')?.value) || 2;
   try {
     const res = await fetch('/api/pipeline/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, options: {} }),
+      body: JSON.stringify({
+        url,
+        options: { clipLimit, workers },
+      }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -437,16 +523,26 @@ function connect() {
   const chip = $('#sse-chip');
 
   source.onopen = () => { chip.dataset.conn = 'on'; };
-  source.onerror = () => { chip.dataset.conn = 'off'; }; // EventSource reconecta solo.
+  source.onerror = () => { chip.dataset.conn = 'off'; };
 
   source.addEventListener('snapshot', (event) => {
     const snap = JSON.parse(event.data);
     state.pipeline = snap.pipeline;
     state.order = snap.nodes.map((node) => node.key);
     state.nodes = new Map(snap.nodes.map((node) => [node.key, node]));
+    state.edgesData = snap.edges || [];
     state.logs = snap.logs;
-    if (!nodeEls.size) buildGraph(snap.nodes);
+    buildGraph(snap.nodes, snap.edges || []);
     resetLogs(snap.logs);
+    renderAll();
+  });
+
+  source.addEventListener('graph_expanded', (event) => {
+    const data = JSON.parse(event.data);
+    state.order = data.nodes.map((node) => node.key);
+    state.nodes = new Map(data.nodes.map((node) => [node.key, node]));
+    state.edgesData = data.edges || [];
+    buildGraph(data.nodes, data.edges || []);
     renderAll();
   });
 
@@ -469,12 +565,16 @@ function connect() {
   source.addEventListener('pipeline', (event) => {
     state.pipeline = JSON.parse(event.data);
     renderPipeline();
-    if (state.pipeline.status === 'completed' && state.pipeline.output?.videoUrl) selectNode('player');
-    else renderDrawer();
+    if (state.pipeline.status === 'completed' && state.pipeline.output) {
+      state.activePreviewClip = state.pipeline.output.clips?.[0] || null;
+      selectNode('player');
+    } else {
+      renderDrawer();
+    }
   });
 }
 
-// Cronómetro en vivo de los nodos en ejecución.
+// Cronómetro en vivo
 setInterval(() => {
   for (const node of state.nodes.values()) {
     if (node.status !== 'running') continue;
