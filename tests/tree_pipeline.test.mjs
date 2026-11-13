@@ -1,7 +1,7 @@
 // Test unitario integral para la arquitectura de Árbol (Fork/Join) y empaquetador ZIP.
 
 import assert from 'node:assert';
-import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { createZipArchive } from '../src/pipeline/packager.mjs';
 import { TRUNK_NODES, JOIN_NODES } from '../src/pipeline/orchestrator.mjs';
@@ -102,7 +102,10 @@ console.log('🧪 Iniciando prueba de Arquitectura de Árbol y Empaquetado ZIP..
 {
   console.log('📋 Test 3: Creación de archivo comprimido .ZIP con múltiples clips');
 
-  const tmpDir = path.resolve('RuntimeClips/renders');
+  const tmpDir = existsSync(path.resolve('renders'))
+    ? path.resolve('renders')
+    : path.resolve('RuntimeClips/renders');
+  mkdirSync(tmpDir, { recursive: true });
   const mockFile1 = path.join(tmpDir, 'mock-clip-01.mp4');
   const mockFile2 = path.join(tmpDir, 'mock-clip-02.mp4');
   const mockFile3 = path.join(tmpDir, 'mock-clip-03.mp4');
