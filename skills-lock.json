@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "skills": {
+    "better-ui": {
+      "source": "jakubkrehel/skills",
+      "sourceType": "github",
+      "skillPath": "skills/better-ui/SKILL.md",
+      "computedHash": "abfdcb9c08248aa0f1ed413ff5390574fa799b6dcb9237fe7e7ce965598a0753"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "computedHash": "83485963700bcf11d5bf78118facb301676b69d918fee2e45a95e7f1a2840f6c"
+    },
+    "frontend-ui-engineering": {
+      "source": "addyosmani/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-ui-engineering/SKILL.md",
+      "computedHash": "73a13aa14acf407518dccde3d021becac59e42e0a90a6a52a86dc53c3a279d12"
+    }
+  }
+}

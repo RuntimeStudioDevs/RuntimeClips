@@ -1,10 +1,28 @@
-# RuntimeClips — Manual de Orquestación para Agentes de IA
+# RuntimeClips — Manual de Orquestación y Guía para Agentes de IA
 
-Bienvenido a **RuntimeClips**. Este documento es la especificación técnica y contrato operativo para que cualquier **Agente de IA** (Antigravity, Claude Code, Cursor, Copilot, etc.) pueda orquestar, inspeccionar, editar y ejecutar el pipeline autónomo de generación de Reels y TikToks verticales 9:16.
+Bienvenido a **RuntimeClips**. Este documento es la especificación técnica y contrato operativo para que cualquier **Agente de IA** (Antigravity, Claude Code, Cursor, Copilot, etc.) pueda orquestar, inspeccionar, editar y ejecutar el pipeline autónomo de generación de Reels y TikToks verticales 9:16, así como el frontend de la **Oficina Agéntica 3D**.
 
 ---
 
-## 1. Filosofía AI-First
+## 1. Convenciones y Reglas del Proyecto
+
+- **Entorno y Ejecución:** 100% local y privado (servidor Express en `http://localhost:3000`).
+- **Arquitectura de Frontend:** Módulos ES nativos en `public/3d/` (Three.js + GSAP) sin bundlers pesados para arranque instantáneo y compatibilidad dual con el grafo n8n.
+- **Rendimiento WebGL:** 60 FPS estricto (`draw calls < 100` con `THREE.InstancedMesh`, capping de DPR a 2, canvas textures reutilizadas sin fugas de VRAM).
+- **Diseño Sonoro:** Síntesis procedural nativa con Web Audio API (cero descargas de audio externas).
+
+---
+
+## 2. Skills Activas en el Repositorio (`.agents/skills/`)
+
+1. **`better-ui`:** Pautas de interfaces táctiles, micro-interacciones y transiciones de alto craft.
+2. **`frontend-design`:** Enfoque anti-slop, dirección estética intencional, tipografía distintiva y paletas de alto contraste.
+3. **`frontend-ui-engineering`:** Patrones de ingeniería frontend, rendimiento, accesibilidad y layouts robustos.
+4. **`threejs-skills`:** Guía moderna de Three.js (r160+/r186), cámaras isométricas, batching, raycasting y shader architecture.
+
+---
+
+## 3. Filosofía AI-First
 
 1. **Separación Clara de Roles:**
    - **Lo que calcula la máquina (Determinista):** Descarga de videos, normalización 1080p 30 fps, transcripción local, centrado facial UltraFace ONNX, renderizado FFmpeg, normalización de audio a -14 LUFS, empaquetado ZIP y auditoría de QA.
@@ -16,7 +34,7 @@ Bienvenido a **RuntimeClips**. Este documento es la especificación técnica y c
 
 ---
 
-## 2. Protocolo de Ejecución Canónico en 5 Pasos
+## 4. Protocolo de Ejecución Canónico en 5 Pasos
 
 ```
 [1. Ingesta & Análisis] ──> [2. Juicio Editorial IA] ──> [3. Árbol de Render] ──> [4. QA Gatekeeper] ──> [5. Entrega Social]
@@ -61,7 +79,7 @@ node src/cli/agent_social.mjs --runId <runId>
 
 ---
 
-## 3. Esquemas JSON de Entrada y Salida
+## 5. Esquemas JSON de Entrada y Salida
 
 ### `storyboard.json` (Opcional, escrito por la IA):
 ```json
@@ -109,7 +127,7 @@ node src/cli/agent_social.mjs --runId <runId>
 
 ---
 
-## 4. Zonas Seguras y Reglas de Oro
+## 6. Zonas Seguras y Reglas de Oro
 
 1. **Márgenes Inviolables:**
    - Superior: `y < 270 px` (Reservado para UI de usuario y audio).
